@@ -25,7 +25,12 @@ func main() {
 		},
 		{
 			time.Date(2020, 1, 1, 1, 0, 0, 0, time.UTC),
-			"alerting",
+			"state",
+			map[string]string{"onefoo": "bar"},
+		},
+		{
+			time.Date(2020, 1, 1, 2, 0, 0, 0, time.UTC),
+			"state",
 			map[string]string{"onefoo": "bar"},
 		},
 	}
@@ -73,12 +78,12 @@ func NewDB() (*StateDB, error) {
 			},
 			{
 				Name:          "state",
-				StorageLayout: parquet.Encoded(parquet.String(), &parquet.RLEDictionary),
+				StorageLayout: parquet.String(),
 				Dynamic:       false,
 			},
 			{
 				Name:          "labels",
-				StorageLayout: parquet.Encoded(parquet.Optional(parquet.String()), &parquet.RLEDictionary),
+				StorageLayout: parquet.Optional(parquet.String()),
 				Dynamic:       true,
 			},
 		},
@@ -143,43 +148,44 @@ func (s *StateDB) Store(ctx context.Context, points ...State) error {
 
 	fmt.Println("keys", keys)
 
-	buf, err := s.schema.NewBuffer(map[string][]string{"labels": keys})
-	if err != nil {
-		return err
-	}
-
-	// Insert the points into the buffer
-	var rows []parquet.Row
+	// Insert the points into the database. We do this one at a time because the parquet rules for repetition level are beyone my expertise. Need to look at how Parca does this.
 	for _, pt := range points {
+		buf, err := s.schema.NewBuffer(map[string][]string{"labels": keys})
+		if err != nil {
+			return err
+		}
 		row := parquet.Row{}
+
 		row = append(row, parquet.ValueOf(pt.Timestamp.UnixMilli()).Level(0, 0, 0))
 		row = append(row, parquet.ValueOf(pt.State).Level(0, 0, 1))
 
 		for i, k := range keys {
+			rep := 0
+			if i > 0 {
+				rep = 2
+			}
 			if value, ok := pt.Labels[k]; ok {
 				fmt.Println("key", k, "value", value)
-				row = append(row, parquet.ValueOf(value).Level(0, 1, 2+i))
+				row = append(row, parquet.ValueOf(value).Level(rep, 1, 2+i))
 			}
 		}
 
-		rows = append(rows, row)
+		fmt.Println("row", row)
+		wrote, err := buf.WriteRows([]parquet.Row{row})
+		if err != nil {
+			return err
+		}
+
+		fmt.Println("points", wrote)
+
+		txID, err := s.table.InsertBuffer(ctx, buf)
+		if err != nil {
+			return err
+		}
+
+		fmt.Println("txID", txID)
+
 	}
-
-	fmt.Println("rows", rows)
-
-	wrote, err := buf.WriteRows(rows)
-	if err != nil {
-		return err
-	}
-
-	fmt.Println("points", wrote)
-
-	txID, err := s.table.InsertBuffer(ctx, buf)
-	if err != nil {
-		return err
-	}
-
-	fmt.Println("txID", txID)
 
 	return nil
 }
