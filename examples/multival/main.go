@@ -3,60 +3,23 @@ package main
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"os"
 	"sort"
 	"time"
 
-	"github.com/apache/arrow/go/v8/arrow"
-	"github.com/apache/arrow/go/v8/arrow/memory"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/polarsignals/arcticdb"
 	"github.com/polarsignals/arcticdb/dynparquet"
-	"github.com/polarsignals/arcticdb/query"
-	"github.com/polarsignals/arcticdb/query/logicalplan"
 	"github.com/segmentio/parquet-go"
+	"github.com/thanos-io/objstore/filesystem"
 )
 
 func main() {
 
-	pts := []State{
-		{
-			time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC),
-			"alerting",
-			map[string]string{"foo": "bar"},
-		},
-		{
-			time.Date(2020, 1, 1, 0, 1, 0, 0, time.UTC),
-			"alerting",
-			map[string]string{"foo": "bar"},
-		},
-		{
-			time.Date(2020, 1, 1, 0, 2, 0, 0, time.UTC),
-			"alerting",
-			map[string]string{"foo": "bar"},
-		},
-		{
-			time.Date(2020, 1, 1, 0, 3, 0, 0, time.UTC),
-			"alerting",
-			map[string]string{"foo": "bar"},
-		},
-		{
-			time.Date(2020, 1, 1, 0, 4, 0, 0, time.UTC),
-			"alerting",
-			map[string]string{"foo": "bar", "onefoo": "onebar"},
-		},
-		{
-			time.Date(2020, 1, 1, 1, 0, 0, 0, time.UTC),
-			"silenced",
-			map[string]string{"onefoo": "bar"},
-		},
-		{
-			time.Date(2020, 1, 1, 2, 0, 0, 0, time.UTC),
-			"pending",
-			map[string]string{"onefoo": "bar"},
-		},
-	}
+	// How big are 1 million evalutation events on disk? Let's find out!
+	pts := genStates(1e6)
 
 	s, err := NewDB()
 	if err != nil {
@@ -65,44 +28,50 @@ func main() {
 	s.Store(context.Background(), pts...)
 
 	// Print all points:
-	eng := query.NewEngine(memory.DefaultAllocator, s.db.TableProvider())
-	plan := eng.ScanTable("state").
-		Filter(
-			logicalplan.Col("state").Eq(logicalplan.Literal("alerting")),
-		).
-		Project(
-			logicalplan.Col("timestamp"),
-			logicalplan.Col("state"),
-			logicalplan.Col("labels.foo"),
-			logicalplan.Col("labels.onefoo"),
-		)
+	//eng := query.NewEngine(memory.DefaultAllocator, s.db.TableProvider())
+	//plan := eng.ScanTable("state").
+	//	Filter(
+	//		logicalplan.Col("state").Eq(logicalplan.Literal("alerting")),
+	//	).
+	//	Project(
+	//		logicalplan.Col("timestamp"),
+	//		logicalplan.Col("state"),
+	//		logicalplan.Col("labels.foo"),
+	//		logicalplan.Col("labels.onefoo"),
+	//	)
 
-	err = plan.Execute(context.Background(), func(row arrow.Record) error {
-		fmt.Println(row.Columns())
-		return nil
-	})
+	//err = plan.Execute(context.Background(), func(row arrow.Record) error {
+	//	fmt.Println(row.Columns())
+	//	return nil
+	//})
 
-	fmt.Printf("\n\n\n\n")
+	//fmt.Printf("\n\n\n\n")
 
-	plan = eng.ScanTable("state").
-		Filter(
-			// Closest thing to "is set" that I can figure
-			logicalplan.Col("labels.onefoo").NotEq(logicalplan.Literal("")),
-		).
-		Project(
-			logicalplan.Col("timestamp"),
-			logicalplan.Col("state"),
-			logicalplan.Col("labels.onefoo"),
-		)
+	//plan = eng.ScanTable("state").
+	//	Filter(
+	//		// Closest thing to "is set" that I can figure
+	//		logicalplan.Col("labels.onefoo").NotEq(logicalplan.Literal("")),
+	//	).
+	//	Project(
+	//		logicalplan.Col("timestamp"),
+	//		logicalplan.Col("state"),
+	//		logicalplan.Col("labels.foo"),
+	//		logicalplan.Col("labels.onefoo"),
+	//	)
 
-	err = plan.Execute(context.Background(), func(row arrow.Record) error {
-		fmt.Println(row.Columns())
-		return nil
-	})
+	//err = plan.Execute(context.Background(), func(row arrow.Record) error {
+	//	fmt.Println(row.Columns())
+	//	return nil
+	//})
 
-	if err != nil {
-		fmt.Println(err)
-	}
+	fmt.Println(s.table.Schema())
+	// Creates a new active block and writes down the current active block. Does this in the background.
+	s.table.RotateBlock()
+	s.db.Close()
+	s.store.Close()
+
+	fmt.Println("waiting for disk writes")
+	<-time.Tick(time.Second * 5)
 }
 
 type StateDB struct {
@@ -114,7 +83,19 @@ type StateDB struct {
 }
 
 func NewDB() (*StateDB, error) {
-	store := arcticdb.New(nil, 8192, 1*1024*1024).WithStoragePath(".")
+	bucket, err := filesystem.NewBucket("/Users/joe/workspace/polarsignals/arcticdb")
+	if err != nil {
+		return nil, err
+	}
+
+	store := arcticdb.New(nil,
+		8192,          // 8k granules - about 1 memory page.
+		100*1024*1024, // 100 MiB active memory size - this is the buffered size, before we write to disk
+	).WithStorageBucket(bucket)
+	if err != nil {
+		return nil, err
+	}
+
 	db, err := store.DB("state")
 	if err != nil {
 		return nil, err
@@ -125,8 +106,13 @@ func NewDB() (*StateDB, error) {
 
 		[]dynparquet.ColumnDefinition{
 			{
-				Name:          "timestamp",
-				StorageLayout: parquet.Int(64),
+				Name:          "labels",
+				StorageLayout: parquet.Encoded(parquet.Optional(parquet.String()), &parquet.RLEDictionary),
+				Dynamic:       true,
+			},
+			{
+				Name:          "rule_uid",
+				StorageLayout: parquet.String(),
 				Dynamic:       false,
 			},
 			{
@@ -135,16 +121,17 @@ func NewDB() (*StateDB, error) {
 				Dynamic:       false,
 			},
 			{
-				Name:          "labels",
-				StorageLayout: parquet.Encoded(parquet.Optional(parquet.String()), &parquet.RLEDictionary),
-				Dynamic:       true,
+				Name:          "timestamp",
+				StorageLayout: parquet.Int(64),
+				Dynamic:       false,
 			},
 		},
 		[]dynparquet.SortingColumn{
-			dynparquet.Descending("timestamp"),
+			dynparquet.Ascending("timestamp"),
+			dynparquet.Ascending("rule_uid"),
 		},
 	)
-	logger := level.NewFilter(log.NewLogfmtLogger(os.Stdout), level.AllowAll())
+	logger := level.NewFilter(log.NewLogfmtLogger(os.Stdout), level.AllowDebug())
 	table, err := db.Table(
 		"state",
 		arcticdb.NewTableConfig(schema),
@@ -164,56 +151,101 @@ func NewDB() (*StateDB, error) {
 
 type State struct {
 	Timestamp time.Time
-	State     string
-	Labels    map[string]string
+	// RuleID and string are "just" special labels, but we want to sort on them,
+	// and the sort order of dynamic columns depends on when they're added to the schema.
+	RuleID string
+	State  string
+	Labels map[string]string
+}
+
+var validStates []string = []string{
+	"Alerting",
+	"Pending",
+	"Resolved",
+}
+
+const maxLabels int = 20
+
+func randLabels(count int) map[string]string {
+	labels := make(map[string]string, count)
+
+	// We want *some* label overlap, so the label string is a padded integer within "maxLabels", sampled without replacement, and the value is a random value within 5*maxLabels, without replacement for each key.
+	keys := []string{}
+	for i := 0; i < maxLabels; i++ {
+		keys = append(keys, fmt.Sprintf("%010d", i))
+	}
+
+	rand.Shuffle(len(keys), func(i, j int) {
+		keys[i] = keys[j]
+	})
+
+	for i, k := range keys {
+		if i > count {
+			break
+		}
+		labels[k] = fmt.Sprintf("%015d", rand.Intn(5*maxLabels))
+	}
+
+	return labels
+}
+
+func genStates(count int) []State {
+	states := make([]State, 0, count)
+	for i := 0; i < count; i++ {
+		state := State{
+			Timestamp: time.UnixMilli(rand.Int63n(2592000000) + 1653271512000), // From 23ish May to 23 June
+			RuleID:    fmt.Sprintf("%020d", rand.Intn(1e6))[0:7],
+			State:     validStates[rand.Intn(len(validStates))],
+			Labels:    randLabels(5 + rand.Intn(maxLabels-5)),
+		}
+
+		states = append(states, state)
+	}
+	return states
 }
 
 func (s *StateDB) Store(ctx context.Context, points ...State) error {
-	// BUG: Someting wrong with nil safety for labels.
 
-	// Insert the points into the database. We do this one at a time because the parquet rules for repetition level are beyone my expertise. Need to look at how Parca does this.
 	for _, pt := range points {
-		labels := map[string][]string{}
 		keys := []string{}
-		for k, v := range pt.Labels {
-			labels[k] = append(labels[k], v)
+		for k := range pt.Labels {
 			keys = append(keys, k)
 		}
 		sort.StringSlice(keys).Sort()
-
-		buf, err := s.schema.NewBuffer(map[string][]string{"labels": keys})
-		if err != nil {
-			return err
-		}
 
 		row := parquet.Row{}
 		labelCount := 0
 		for _, k := range keys {
 			if value, ok := pt.Labels[k]; ok {
-				fmt.Println("key", k, "value", value)
 				row = append(row, parquet.ValueOf(value).Level(0, 1, labelCount))
 				labelCount++
 			}
 		}
 
-		row = append(row, parquet.ValueOf(pt.State).Level(0, 0, labelCount))
-		row = append(row, parquet.ValueOf(pt.Timestamp.UnixMilli()).Level(0, 0, labelCount+1))
+		// Mark all the label keys we've seen. We need this to correctly set the repetition level for dynamic columns.
+		row = append(row, parquet.ValueOf(pt.RuleID).Level(0, 0, labelCount))
+		row = append(row, parquet.ValueOf(pt.State).Level(0, 0, labelCount+1))
+		row = append(row, parquet.ValueOf(pt.Timestamp.UnixMilli()).Level(0, 0, labelCount+2))
 
-		fmt.Println("row", row)
-		wrote, err := buf.WriteRows([]parquet.Row{row})
+		// We write one at a time here because it's complicated to set the
+		// repetition level correctly for dynamic columns. You have to track which
+		// columns have been seen in the current buffer and set the repetition
+		// level to the correct depth. Wish arcticdb handled this, but c'est la
+		// vie.
+		buf, err := s.schema.NewBuffer(map[string][]string{"labels": keys})
 		if err != nil {
 			return err
 		}
 
-		fmt.Println("points", wrote)
-
-		txID, err := s.table.InsertBuffer(ctx, buf)
+		_, err = buf.WriteRows([]parquet.Row{row})
 		if err != nil {
 			return err
 		}
 
-		fmt.Println("txID", txID)
-
+		_, err = s.table.InsertBuffer(ctx, buf)
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
