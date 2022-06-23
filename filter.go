@@ -1,4 +1,4 @@
-package arcticdb
+package frostdb
 
 import (
 	"errors"
@@ -8,8 +8,8 @@ import (
 	"github.com/apache/arrow/go/v8/arrow/scalar"
 	"github.com/segmentio/parquet-go"
 
-	"github.com/polarsignals/arcticdb/dynparquet"
-	"github.com/polarsignals/arcticdb/query/logicalplan"
+	"github.com/polarsignals/frostdb/dynparquet"
+	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
 type PreExprVisitorFunc func(expr logicalplan.Expr) bool
@@ -43,6 +43,8 @@ func arrowScalarToParquetValue(sc scalar.Scalar) (parquet.Value, error) {
 		v := [16]byte{}
 		copy(v[:width], s.Data())
 		return parquet.ValueOf(v), nil
+	case nil:
+		return parquet.Value{}, nil
 	default:
 		return parquet.Value{}, fmt.Errorf("unsupported scalar type %T", s)
 	}

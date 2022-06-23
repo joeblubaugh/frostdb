@@ -9,8 +9,8 @@ import (
 	"github.com/apache/arrow/go/v8/arrow/memory"
 	"github.com/stretchr/testify/require"
 
-	"github.com/polarsignals/arcticdb/dynparquet"
-	"github.com/polarsignals/arcticdb/query/logicalplan"
+	"github.com/polarsignals/frostdb/dynparquet"
+	"github.com/polarsignals/frostdb/query/logicalplan"
 )
 
 type mockTableReader struct {
@@ -21,8 +21,13 @@ func (m *mockTableReader) Schema() *dynparquet.Schema {
 	return m.schema
 }
 
+func (m *mockTableReader) View(fn func(tx uint64) error) error {
+	return nil
+}
+
 func (m *mockTableReader) Iterator(
 	ctx context.Context,
+	tx uint64,
 	pool memory.Allocator,
 	projection []logicalplan.ColumnMatcher,
 	filter logicalplan.Expr,
@@ -34,6 +39,7 @@ func (m *mockTableReader) Iterator(
 
 func (m *mockTableReader) SchemaIterator(
 	ctx context.Context,
+	tx uint64,
 	pool memory.Allocator,
 	projection []logicalplan.ColumnMatcher,
 	filter logicalplan.Expr,
@@ -41,6 +47,17 @@ func (m *mockTableReader) SchemaIterator(
 	callback func(r arrow.Record) error,
 ) error {
 	return nil
+}
+
+func (m *mockTableReader) ArrowSchema(
+	ctx context.Context,
+	tx uint64,
+	pool memory.Allocator,
+	projection []logicalplan.ColumnMatcher,
+	filter logicalplan.Expr,
+	distinctColumns []logicalplan.ColumnMatcher,
+) (*arrow.Schema, error) {
+	return nil, nil
 }
 
 type mockTableProvider struct {

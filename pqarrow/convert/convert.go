@@ -7,7 +7,7 @@ import (
 	"github.com/apache/arrow/go/v8/arrow/array"
 	"github.com/segmentio/parquet-go"
 
-	"github.com/polarsignals/arcticdb/pqarrow/writer"
+	"github.com/polarsignals/frostdb/pqarrow/writer"
 )
 
 // ParquetNodeToType converts a parquet node to an arrow type.
@@ -26,7 +26,7 @@ func ParquetNodeToTypeWithWriterFunc(n parquet.Node) (arrow.DataType, func(b arr
 	lt := t.LogicalType()
 
 	if lt == nil {
-		return nil, nil, errors.New("unsupported type")
+		return nil, nil, errors.New("unsupported type: " + n.Type().String())
 	}
 
 	switch {
@@ -43,6 +43,6 @@ func ParquetNodeToTypeWithWriterFunc(n parquet.Node) (arrow.DataType, func(b arr
 			return nil, nil, errors.New("unsupported int bit width")
 		}
 	default:
-		return nil, nil, errors.New("unsupported type")
+		return nil, nil, errors.New("unsupported type: " + n.Type().String())
 	}
 }

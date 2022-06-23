@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/polarsignals/arcticdb/dynparquet"
+	"github.com/polarsignals/frostdb/dynparquet"
 )
 
 func TestMergeToArrow(t *testing.T) {
@@ -94,6 +94,7 @@ func TestMergeToArrow(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(5), ar.NumRows())
 	require.Equal(t, int64(8), ar.NumCols())
+	require.Len(t, ar.Schema().Fields(), 8)
 }
 
 func BenchmarkParquetToArrow(b *testing.B) {
