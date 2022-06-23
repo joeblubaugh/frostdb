@@ -19,7 +19,7 @@ import (
 func main() {
 
 	// How big are 1 million evalutation events on disk? Let's find out!
-	pts := genStates(1e6)
+	pts := genStates(1e5)
 
 	s, err := NewDB()
 	if err != nil {
@@ -89,8 +89,8 @@ func NewDB() (*StateDB, error) {
 	}
 
 	store := arcticdb.New(nil,
-		8192,          // 8k granules - about 1 memory page.
-		100*1024*1024, // 100 MiB active memory size - this is the buffered size, before we write to disk
+		8192,        // 8k granules - about 1 memory page.
+		1*1024*1024, // 100 MiB active memory size - this is the buffered size, before we write to disk
 	).WithStorageBucket(bucket)
 	if err != nil {
 		return nil, err
