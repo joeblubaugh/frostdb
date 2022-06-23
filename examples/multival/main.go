@@ -10,8 +10,8 @@ import (
 
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
-	"github.com/polarsignals/arcticdb"
-	"github.com/polarsignals/arcticdb/dynparquet"
+	"github.com/polarsignals/frostdb"
+	"github.com/polarsignals/frostdb/dynparquet"
 	"github.com/segmentio/parquet-go"
 	"github.com/thanos-io/objstore/filesystem"
 )
@@ -75,9 +75,9 @@ func main() {
 }
 
 type StateDB struct {
-	store *arcticdb.ColumnStore
-	db    *arcticdb.DB
-	table *arcticdb.Table
+	store *frostdb.ColumnStore
+	db    *frostdb.DB
+	table *frostdb.Table
 
 	schema *dynparquet.Schema
 }
@@ -88,7 +88,7 @@ func NewDB() (*StateDB, error) {
 		return nil, err
 	}
 
-	store := arcticdb.New(nil,
+	store := frostdb.New(nil,
 		8192,        // 8k granules - about 1 memory page.
 		1*1024*1024, // 100 MiB active memory size - this is the buffered size, before we write to disk
 	).WithStorageBucket(bucket)
@@ -134,7 +134,7 @@ func NewDB() (*StateDB, error) {
 	logger := level.NewFilter(log.NewLogfmtLogger(os.Stdout), level.AllowDebug())
 	table, err := db.Table(
 		"state",
-		arcticdb.NewTableConfig(schema),
+		frostdb.NewTableConfig(schema),
 		logger,
 	)
 	if err != nil {
